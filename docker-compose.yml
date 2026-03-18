@@ -1,0 +1,128 @@
+# Docker Compose Configuration for WordPress Stack
+# Complete WordPress environment: MySQL · WordPress · Redis · Adminer
+# Credentials are loaded from .env — copy .env.example → .env before starting.
+
+services:
+
+  # ── MySQL 8 ────────────────────────────────────────────────────────────────
+  db:
+    image: mysql:8.0
+    container_name: wp_blog_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE:      ${MYSQL_DATABASE}
+      MYSQL_USER:          ${MYSQL_USER}
+      MYSQL_PASSWORD:      ${MYSQL_PASSWORD}
+    volumes:
+      - wp_blog_db_data:/var/lib/mysql
+    networks:
+      - wp_blog_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  # ── Redis (object cache) ───────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: wp_blog_redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    networks:
+      - wp_blog_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+    deploy:
+      resources:
+        limits:
+          memory: 160m
+
+  # ── WordPress ──────────────────────────────────────────────────────────────
+  wordpress:
+    image: wordpress:latest
+    container_name: wp_blog_site
+    restart: unless-stopped
+    ports:
+      - "${WP_PORT:-8080}:80"           # http://localhost:8080
+    environment:
+      WORDPRESS_DB_HOST:     ${WORDPRESS_DB_HOST}
+      WORDPRESS_DB_USER:     ${WORDPRESS_DB_USER}
+      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD}
+      WORDPRESS_DB_NAME:     ${WORDPRESS_DB_NAME}
+      # Enable Redis object cache via wp-config constants
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_REDIS_HOST', 'redis');
+        define('WP_REDIS_PORT', 6379);
+        define('WP_CACHE', true);
+    volumes:
+      - wp_blog_data:/var/www/html      # Themes, plugins, uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - wp_blog_network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fso /dev/null http://localhost || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  # ── Adminer (DB GUI) ───────────────────────────────────────────────────────
+  adminer:
+    image: adminer:latest
+    container_name: wp_blog_adminer
+    restart: unless-stopped
+    ports:
+      - "${ADMINER_PORT:-8081}:8080"    # http://localhost:8081
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - wp_blog_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+# ── Named Volumes ──────────────────────────────────────────────────────────────
+volumes:
+  wp_blog_db_data:    # MySQL data files
+  wp_blog_data:       # WordPress files (themes, plugins, uploads)
+
+# ── Networks ───────────────────────────────────────────────────────────────────
+networks:
+  wp_blog_network:
+    driver: bridge
