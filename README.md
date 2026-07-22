@@ -1,19 +1,20 @@
 # wp_blog — WordPress Docker Stack
 
-A production-ready WordPress environment running on Docker Compose with MySQL, Redis object caching, and Adminer.
+A production-ready WordPress environment running on Docker Compose with Redis object caching, configured to connect to your host's global MySQL database and Adminer.
 
 ## Services
 
 | Service | Image | Port |
 |---|---|---|
 | WordPress | `wordpress:latest` | [http://localhost:8080](http://localhost:8080) |
-| Adminer (DB GUI) | `adminer:latest` | [http://localhost:8081](http://localhost:8081) |
-| MySQL | `mysql:8.0` | internal only |
 | Redis | `redis:7-alpine` | internal only |
+| MySQL (Host) | VPS Global MySQL | `host.docker.internal:3306` |
+| Adminer (Host) | VPS Global Adminer | Host managed |
 
 ## Prerequisites
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (includes Docker Compose v2)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Docker Engine (includes Docker Compose v2)
+- Existing MySQL instance running on host VPS
 
 ## Quick Start
 
@@ -25,7 +26,7 @@ cd wordpress-docker
 # 2. Create your local credentials file
 cp .env.example .env
 
-# 3. Open .env and set strong passwords
+# 3. Open .env and set your host MySQL credentials
 nano .env   # or: code .env
 
 # 4. Start the stack
@@ -39,15 +40,13 @@ open http://localhost:8080
 
 All credentials are stored in `.env` (never committed). Use `.env.example` as the template.
 
-| Variable | Description |
-|---|---|
-| `MYSQL_ROOT_PASSWORD` | MySQL root password |
-| `MYSQL_DATABASE` | Database name (`wp_blog`) |
-| `MYSQL_USER` | WordPress DB user |
-| `MYSQL_PASSWORD` | WordPress DB password |
-| `WORDPRESS_DB_*` | Must match the MySQL values above |
-| `WP_PORT` | Host port for WordPress (default `8080`) |
-| `ADMINER_PORT` | Host port for Adminer (default `8081`) |
+| Variable | Description | Default |
+|---|---|---|
+| `WORDPRESS_DB_HOST` | Host MySQL address | `host.docker.internal:3306` |
+| `WORDPRESS_DB_NAME` | Database name on host MySQL | `wp_blog` |
+| `WORDPRESS_DB_USER` | WordPress DB user on host MySQL | `wp_blog` |
+| `WORDPRESS_DB_PASSWORD` | WordPress DB password | `change_me_wp` |
+| `WP_PORT` | Host port for WordPress | `8080` |
 
 ## Redis Object Cache
 
@@ -69,26 +68,25 @@ docker compose stop
 # View logs (follow mode)
 docker compose logs -f
 
-# View logs for a single service
+# View logs for WordPress service
 docker compose logs -f wordpress
 
 # Restart a service
 docker compose restart wordpress
 
-# Tear down (removes containers; data volumes are preserved)
+# Tear down (removes containers; data volume is preserved)
 docker compose down
 
-# Tear down AND delete all data volumes (destructive!)
+# Tear down AND delete WordPress data volume (destructive!)
 docker compose down -v
 ```
 
 ## Persistent Data
 
-Data survives container restarts and removals via named Docker volumes:
+Data survives container restarts and removals via a named Docker volume:
 
 | Volume | Contents |
 |---|---|
-| `wp_blog_db_data` | MySQL database files |
 | `wp_blog_data` | WordPress files (themes, plugins, uploads) |
 
 To back up the WordPress uploads folder:
@@ -107,6 +105,9 @@ wp/
 ├── docker-compose.yml   # Stack definition
 ├── .env                 # Local credentials (git-ignored)
 ├── .env.example         # Credentials template (safe to commit)
+├── php/
+│   └── conf.d/
+│       └── uploads.ini  # Custom PHP upload settings
 ├── .gitignore
 └── README.md
 ```
@@ -115,56 +116,6 @@ wp/
 
 - **Change all default passwords** in `.env` before exposing any port to the internet.
 - Do not commit `.env` — it is listed in `.gitignore`.
-- For production, place WordPress behind a reverse proxy (e.g., Nginx + Let's Encrypt / Traefik) and remove the direct port mapping.
+- Ensure host MySQL accepts connections from the Docker gateway (`host.docker.internal` / `172.17.0.1`).
+- For production, place WordPress behind a reverse proxy (e.g., Nginx + Let's Encrypt / Traefik) and remove direct port mapping.
 
-## Upstream WordPress Docker Image (reference)
-
-Quick reference: the official WordPress images are maintained by the Docker Community and documented on Docker Hub.
-
-- **Where to get help:** Docker Community Slack, Server Fault, Unix & Linux, Stack Overflow.
-- **Supported architectures:** amd64, arm32v5, arm32v6, arm32v7, arm64v8, i386, ppc64le, riscv64, s390x.
-
-Example usage (docker run):
-
-```bash
-docker run --name some-wordpress --network some-network -d wordpress
-```
-
-Example compose snippet (upstream pattern):
-
-```yaml
-services:
-  wordpress:
-    image: wordpress
-    restart: always
-    ports:
-      - 8080:80
-    environment:
-      WORDPRESS_DB_HOST: db
-      WORDPRESS_DB_USER: exampleuser
-      WORDPRESS_DB_PASSWORD: examplepass
-      WORDPRESS_DB_NAME: exampledb
-    volumes:
-      - wordpress:/var/www/html
-
-  db:
-    image: mysql:8.0
-    restart: always
-    environment:
-      MYSQL_DATABASE: exampledb
-      MYSQL_USER: exampleuser
-      MYSQL_PASSWORD: examplepass
-    volumes:
-      - db:/var/lib/mysql
-
-volumes:
-  wordpress:
-  db:
-```
-
-Notes from upstream:
-- The official image honors environment variables such as `WORDPRESS_DB_*`, `WORDPRESS_DEBUG` and `WORDPRESS_CONFIG_EXTRA` (which is eval'd by `wp-config.php`).
-- For additional PHP extensions or customizations, extend the image (`FROM wordpress:<tag>`) and add required configuration.
-- Consider Docker Secrets for sensitive values via `_FILE` variants (e.g., `WORDPRESS_DB_PASSWORD_FILE`).
-
-Full upstream docs and supported tags: https://hub.docker.com/_/wordpress
